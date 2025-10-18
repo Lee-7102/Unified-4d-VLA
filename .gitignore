@@ -5,6 +5,7 @@ logs*
 taming*
 samples*
 datasets*
+data/*
 asset*
 _*
 logs*
