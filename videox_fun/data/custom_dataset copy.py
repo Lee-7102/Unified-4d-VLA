@@ -460,138 +460,96 @@ class ImageVideoDataset(Dataset):
     def get_batch(self, idx):
         data_info = self.dataset[idx % len(self.dataset)]
         
-        if data_info.get('type', 'image')=='video':
-            video_id = data_info['file_path']
-            pointmap_id = data_info['pointmap_path']
-            ee_xyz_id = data_info['ee_xyz_path']
-            ee_rpy_id = data_info['ee_rpy_path']
-            ee_gripper_id = data_info['ee_gripper_path']
-            text = data_info['text']
+        if data_info.get('type', 'image')=='video':#'image is the return default
+            video_id, pointmap_id, ee_xyz_id,ee_rpy_id, ee_gripper_id, text = data_info['file_path'], data_info['pointmap_path'], data_info['ee_xyz_path'],data_info['ee_rpy_path'], data_info['ee_gripper_path'],data_info['text']
 
             if self.data_root is None:
-                video_paths = {
-                    'video': video_id,
-                    'pointmap': pointmap_id,
-                    'ee_xyz': ee_xyz_id,
-                    'ee_rpy': ee_rpy_id,
-                    'ee_gripper': ee_gripper_id
-                }
+                video_dir = video_id
+                pointmap_dir = pointmap_id
+                ee_xyz_dir = ee_xyz_id
+                ee_rpy_dir = ee_rpy_id
+                ee_gripper_dir = ee_gripper_id
             else:
-                video_paths = {
-                    'video': os.path.join(self.data_root, video_id),
-                    'pointmap': os.path.join(self.data_root, pointmap_id),
-                    'ee_xyz': os.path.join(self.data_root, ee_xyz_id),
-                    'ee_rpy': os.path.join(self.data_root, ee_rpy_id),
-                    'ee_gripper': os.path.join(self.data_root, ee_gripper_id)
-                }
+                video_dir = os.path.join(self.data_root, video_id)
+                pointmap_dir = os.path.join(self.data_root, pointmap_id)
+                ee_xyz_dir = os.path.join(self.data_root, ee_xyz_id)
+                ee_rpy_dir = os.path.join(self.data_root, ee_rpy_id)
+                ee_gripper_dir = os.path.join(self.data_root, ee_gripper_id)
 
-            # First, check frame counts for all videos to find the minimum
-            frame_counts = {}
-            for name, path in video_paths.items():
-                try:
-                    with VideoReader_contextmanager(path, num_threads=2) as vr:
-                        frame_counts[name] = len(vr)
-                except Exception as e:
-                    raise ValueError(f"Failed to open {name} video at {path}: {e}")
-            
-            min_frames = min(frame_counts.values())
-            
-            if min_frames == 0:
-                raise ValueError(f"One or more videos have 0 frames. Frame counts: {frame_counts}")
-            
-            # Calculate sampling parameters based on minimum frame count
-            min_sample_n_frames = min(
-                self.video_sample_n_frames, 
-                int(min_frames * (self.video_length_drop_end - self.video_length_drop_start) // self.video_sample_stride)
+            pixel_video_values = load_video_frames(
+                video_dir,
+                self.video_sample_n_frames,
+                self.video_sample_stride,
+                self.video_length_drop_start,
+                self.video_length_drop_end,
+                self.larger_side_of_image_and_video,
+                self.enable_bucket,
+                self.video_transforms,
+                VIDEO_READER_TIMEOUT,
+                idx
             )
-            
-            if min_sample_n_frames == 0:
-                raise ValueError(
-                    f"Cannot sample frames. min_frames={min_frames}, "
-                    f"stride={self.video_sample_stride}, "
-                    f"drop_range={self.video_length_drop_end - self.video_length_drop_start}. "
-                    f"Frame counts: {frame_counts}"
-                )
 
-            video_length = int(self.video_length_drop_end * min_frames)
-            clip_length = min(video_length, (min_sample_n_frames - 1) * self.video_sample_stride + 1)
-            start_idx = random.randint(
-                int(self.video_length_drop_start * video_length), 
-                video_length - clip_length
-            ) if video_length != clip_length else 0
-            
-            batch_index = np.linspace(start_idx, start_idx + clip_length - 1, min_sample_n_frames, dtype=int)
+            pixel_pointmap_values = load_video_frames(
+                pointmap_dir,
+                self.video_sample_n_frames,
+                self.video_sample_stride,
+                self.video_length_drop_start,
+                self.video_length_drop_end,
+                self.larger_side_of_image_and_video,
+                self.enable_bucket,
+                self.video_transforms,
+                VIDEO_READER_TIMEOUT,
+                idx
+            )
 
-            # Helper function to load one video with the calculated batch_index
-            def load_one_video(video_path, video_name):
-                with VideoReader_contextmanager(video_path, num_threads=2) as vr:
-                    # Verify indices are within bounds
-                    max_index = len(vr) - 1
-                    if batch_index.max() > max_index:
-                        raise ValueError(
-                            f"Batch index out of bounds for {video_name}. "
-                            f"Max index: {batch_index.max()}, Video length: {len(vr)}, "
-                            f"Batch indices: {batch_index}"
-                        )
-                    
-                    try:
-                        sample_args = (vr, batch_index)
-                        frames = func_timeout(VIDEO_READER_TIMEOUT, get_video_reader_batch, args=sample_args)
-                        resized_frames = [resize_frame(frame, self.larger_side_of_image_and_video) for frame in frames]
-                        return np.array(resized_frames)
-                    except FunctionTimedOut:
-                        raise ValueError(f"Read timeout for {video_path}.")
-                    except Exception as e:
-                        raise ValueError(f"Failed to extract frames from {video_path}. Error is {e}.")
+            pixel_ee_xyz_values = load_video_frames(
+                ee_xyz_dir,
+                self.video_sample_n_frames,
+                self.video_sample_stride,
+                self.video_length_drop_start,
+                self.video_length_drop_end,
+                self.larger_side_of_image_and_video,
+                self.enable_bucket,
+                self.video_transforms,
+                VIDEO_READER_TIMEOUT,
+                idx
+            )
 
-            # Load all 5 videos
-            pixel_video_values = load_one_video(video_paths['video'], 'video')
-            pixel_pointmap_values = load_one_video(video_paths['pointmap'], 'pointmap')
-            pixel_ee_xyz_values = load_one_video(video_paths['ee_xyz'], 'ee_xyz')
-            pixel_ee_rpy_values = load_one_video(video_paths['ee_rpy'], 'ee_rpy')
-            pixel_ee_gripper_values = load_one_video(video_paths['ee_gripper'], 'ee_gripper')
-            
-            # Ensure all videos have the same number of frames by truncating to min_sample_n_frames
-            pixel_video_values = pixel_video_values[:min_sample_n_frames]
-            pixel_pointmap_values = pixel_pointmap_values[:min_sample_n_frames]
-            pixel_ee_xyz_values = pixel_ee_xyz_values[:min_sample_n_frames]
-            pixel_ee_rpy_values = pixel_ee_rpy_values[:min_sample_n_frames]
-            pixel_ee_gripper_values = pixel_ee_gripper_values[:min_sample_n_frames]
+            pixel_ee_rpy_values = load_video_frames(
+                ee_rpy_dir,
+                self.video_sample_n_frames,
+                self.video_sample_stride,
+                self.video_length_drop_start,
+                self.video_length_drop_end,
+                self.larger_side_of_image_and_video,
+                self.enable_bucket,
+                self.video_transforms,
+                VIDEO_READER_TIMEOUT,
+                idx
+            )
 
-            # Concatenate based on enable_bucket
-            if not self.enable_bucket:
-                # Convert to torch tensors: [frames, height, width, channels] -> [frames, channels, height, width]
-                pixel_video_values = torch.from_numpy(pixel_video_values).permute(0, 3, 1, 2).contiguous().float() / 255.
-                pixel_pointmap_values = torch.from_numpy(pixel_pointmap_values).permute(0, 3, 1, 2).contiguous().float() / 255.
-                pixel_ee_xyz_values = torch.from_numpy(pixel_ee_xyz_values).permute(0, 3, 1, 2).contiguous().float() / 255.
-                pixel_ee_rpy_values = torch.from_numpy(pixel_ee_rpy_values).permute(0, 3, 1, 2).contiguous().float() / 255.
-                pixel_ee_gripper_values = torch.from_numpy(pixel_ee_gripper_values).permute(0, 3, 1, 2).contiguous().float() / 255.
-                
-                # Concatenate along width dimension (dim=3)
-                # Shape: [frames, channels, height, width] -> [frames, channels, height, width*5]
-                pixel_values = torch.cat(
-                    [pixel_video_values, pixel_pointmap_values, pixel_ee_xyz_values, 
-                    pixel_ee_rpy_values, pixel_ee_gripper_values],
-                    dim=3
-                )
-                
-                # Apply transforms (normalize, resize, crop)
-                pixel_values = self.video_transforms(pixel_values)
-            else:
-                # Keep as numpy arrays: [frames, height, width, channels]
-                # Concatenate along width dimension (axis=2)
-                # Shape: [frames, height, width, channels] -> [frames, height, width*5, channels]
-                pixel_values = np.concatenate(
-                    [pixel_video_values, pixel_pointmap_values, pixel_ee_xyz_values, 
-                    pixel_ee_rpy_values, pixel_ee_gripper_values],
-                    axis=2
-                )
+            pixel_ee_gripper_values = load_video_frames(
+                ee_gripper_dir,
+                self.video_sample_n_frames,
+                self.video_sample_stride,
+                self.video_length_drop_start,
+                self.video_length_drop_end,
+                self.larger_side_of_image_and_video,
+                self.enable_bucket,
+                self.video_transforms,
+                VIDEO_READER_TIMEOUT,
+                idx
+            )
+            pixel_values = torch.cat(
+                [pixel_video_values, pixel_pointmap_values, pixel_ee_xyz_values, pixel_ee_rpy_values, pixel_ee_gripper_values],
+                dim=3  # concatenate along width
+            )
 
             # Random text drop
             if random.random() < self.text_drop_ratio:
                 text = ''
 
-            return pixel_values, text, 'video', video_paths['video']
+            return pixel_values, text, 'video', video_dir
         
         else:
             image_path, text = data_info['file_path'], data_info['text']
