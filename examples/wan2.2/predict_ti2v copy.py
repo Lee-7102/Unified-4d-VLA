@@ -99,17 +99,15 @@ vae_path                = None
 lora_path               = '/vast/projects/jgu32/lab/yiqian/VideoX-Fun/models/Personalized_Model/checkpoint-390.safetensors'
 lora_high_path          = None
 
-# Other params - CORRECTED TO MATCH TRAINING RESOLUTION
-# Training used video_sample_size=256, which after concatenation becomes [256, 1280]
-sample_size         = [256, 1280]  # height=256, width=256*5=1280 (5 videos concatenated)
+# Other params
+sample_size         = [256, 1280]#[704, 1280*5]
 video_length        = 121
 fps                 = 24
 
 # Use torch.float16 if GPU does not support torch.bfloat16
-# Some graphics cards, such as v100, 2080ti, do not support torch.bfloat16
+# ome graphics cards, such as v100, 2080ti, do not support torch.bfloat16
 weight_dtype            = torch.bfloat16
 # If you want to generate from text, please set the validation_image_start = None and validation_image_end = None
-# NOTE: This image must be 256x1280 (5 frames of 256x256 concatenated horizontally)
 validation_image_start  = "/vast/projects/jgu32/lab/yiqian/VideoX-Fun/first_frame.jpg"
 
 # prompts
@@ -332,11 +330,6 @@ if lora_path is not None:
         pipeline = unmerge_lora(pipeline, lora_high_path, lora_high_weight, device=device, dtype=weight_dtype, sub_transformer_name="transformer_2")
 
 def save_results():
-    """
-    Save the generated video results.
-    The generated video has width=1280 (5 videos of 256 width concatenated).
-    This function splits them into 5 separate videos.
-    """
     if not os.path.exists(save_path):
         os.makedirs(save_path, exist_ok=True)
 
@@ -351,33 +344,22 @@ def save_results():
         image = (image * 255).numpy().astype(np.uint8)
         image = Image.fromarray(image)
         image.save(video_path)
-        print(f"Saved image to: {video_path}")
     else:
-        # The sample has width=1280, which is 5 videos of width=256 concatenated
-        # sample shape: [batch, channels, frames, height, width]
-        # We need to split along the width dimension
-        
-        full_width = sample.shape[-1]  # Should be 1280
-        width_per_video = 256  # Each individual video is 256 pixels wide
+        # Split the concatenated video into 5 parts
+        full_width = sample.shape[-1]
+        width_per_video = full_width // 5
         
         video_names = ['main', 'pointmap', 'ee_xyz', 'ee_rpy', 'ee_gripper']
         
-        print(f"Splitting {full_width}px wide video into {len(video_names)} videos of {width_per_video}px each...")
-        
         for i, name in enumerate(video_names):
-            # Extract each 256-width segment
-            start_x = i * width_per_video
-            end_x = (i + 1) * width_per_video
-            video_segment = sample[..., start_x:end_x]
-            
+            # Extract each video segment
+            video_segment = sample[..., i*width_per_video:(i+1)*width_per_video]
             video_path = os.path.join(save_path, f"{prefix}_{name}.mp4")
             save_videos_grid(video_segment, video_path, fps=fps)
-            print(f"Saved {name} video to: {video_path}")
         
         # Optionally save the full concatenated video too
-        full_video_path = os.path.join(save_path, f"{prefix}_full_concatenated.mp4")
+        full_video_path = os.path.join(save_path, f"{prefix}_full.mp4")
         save_videos_grid(sample, full_video_path, fps=fps)
-        print(f"Saved full concatenated video to: {full_video_path}")
 
 if ulysses_degree * ring_degree > 1:
     import torch.distributed as dist
@@ -385,12 +367,3 @@ if ulysses_degree * ring_degree > 1:
         save_results()
 else:
     save_results()
-
-print("\n" + "="*80)
-print("INFERENCE COMPLETE!")
-print("="*80)
-print(f"Generated videos saved to: {save_path}")
-print(f"Resolution: {sample_size[0]}x{sample_size[1]} (height x width)")
-print(f"Video length: {video_length} frames at {fps} FPS")
-print(f"Split into 5 separate videos: main, pointmap, ee_xyz, ee_rpy, ee_gripper")
-print("="*80)

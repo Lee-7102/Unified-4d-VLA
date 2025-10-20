@@ -8,13 +8,11 @@
 #SBATCH --output=logs/%x-%j.out
 #SBATCH --error=logs/%x-%j.err
 
-source /vast/home/l/liyiqian/anaconda3/etc/profile.d/conda.sh
-conda activate vx
-
 export TMPDIR=/vast/projects/jgu32/lab/yiqian/tmp_${SLURM_JOB_ID}
 mkdir -p $TMPDIR
-ulimit -n 65536
-ulimit -l unlimited
+
+source /vast/home/l/liyiqian/anaconda3/etc/profile.d/conda.sh
+conda activate vx
 
 export NCCL_DEBUG=INFO
 export NCCL_IB_DISABLE=1
@@ -26,7 +24,7 @@ export MODEL_NAME="/vast/projects/jgu32/lab/yiqian/VideoX-Fun/models/Diffusion_T
 export DATASET_NAME="/vast/projects/jgu32/lab/yiqian/VideoX-Fun"
 export DATASET_META_NAME="/vast/projects/jgu32/lab/han/data/maniskill/PickCube-v1/videox/json_of_internal_datasets.json"
 
-accelerate launch --num_processes=8 --mixed_precision="bf16" scripts/wan2.2/train_lora_custom.py \
+accelerate launch --mixed_precision="bf16" scripts/wan2.2/train_lora_custom.py \
   --config_path="/vast/projects/jgu32/lab/yiqian/VideoX-Fun/config/wan2.2/wan_civitai_5b.yaml" \
   --pretrained_model_name_or_path=$MODEL_NAME \
   --train_data_dir=$DATASET_NAME \
@@ -39,7 +37,7 @@ accelerate launch --num_processes=8 --mixed_precision="bf16" scripts/wan2.2/trai
   --train_batch_size=16 \
   --video_repeat=1 \
   --gradient_accumulation_steps=1 \
-  --dataloader_num_workers=1 \
+  --dataloader_num_workers=8 \
   --num_train_epochs=5 \
   --checkpointing_steps=50 \
   --learning_rate=1e-04 \
@@ -59,4 +57,3 @@ accelerate launch --num_processes=8 --mixed_precision="bf16" scripts/wan2.2/trai
   --train_mode="ti2v" \
   --low_vram
 
-rm -rf $TMPDIR
